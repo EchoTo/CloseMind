@@ -1,0 +1,270 @@
+# A股量化预测系统配置文件
+
+# 项目基础配置
+project:
+  name: "CloseMind"
+  version: "1.0.0"
+  description: "A股量化预测系统"
+
+# 路径配置
+paths:
+  data_dir: "./data_storage"
+  raw_data_dir: "./data_storage/raw"
+  processed_data_dir: "./data_storage/processed"
+  qlib_data_dir: "./data_storage/qlib"
+  model_dir: "./checkpoints"
+  log_dir: "./logs"
+  report_dir: "./reports"
+
+# 数据配置
+data:
+  # 数据源
+  source: "akshare"
+
+  # 时间范围
+  start_date: "2022-01-01"
+  end_date: null  # null表示到最新日期
+
+  # 股票筛选
+  stock_filter:
+    exclude_st: true           # 排除ST股
+    exclude_new_stock_days: 60 # 排除上市不满60天的新股
+    exclude_suspend: true      # 排除停牌股
+    min_market_cap: null       # 最小市值(亿), null表示不限
+
+  # 下载配置
+  download:
+    retry_times: 3             # 重试次数
+    retry_delay: 5             # 重试间隔(秒)
+    batch_size: 100            # 批量下载数量
+    parallel_workers: 4        # 并行下载数
+
+  # 指数列表
+  indices:
+    - code: "000001"
+      name: "上证指数"
+    - code: "399001"
+      name: "深证成指"
+    - code: "000300"
+      name: "沪深300"
+    - code: "000905"
+      name: "中证500"
+    - code: "399006"
+      name: "创业板指"
+
+# 特征配置
+features:
+  # 技术指标
+  technical:
+    # 均线
+    ma_periods: [5, 10, 20, 30, 60, 120, 250]
+    ema_periods: [5, 10, 20, 60]
+
+    # MACD
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+
+    # RSI
+    rsi_periods: [6, 12, 24]
+
+    # KDJ
+    kdj_period: 9
+    kdj_signal: 3
+
+    # CCI
+    cci_period: 20
+
+    # ATR
+    atr_period: 14
+
+    # Bollinger Bands
+    boll_period: 20
+    boll_std: 2
+
+    # ROC
+    roc_periods: [1, 5, 10, 20]
+
+  # 量价特征
+  volume_price:
+    return_periods: [1, 2, 3, 5, 10, 20, 60]
+    volatility_periods: [5, 10, 20, 60]
+    volume_ma_periods: [5, 10, 20]
+
+  # 市场特征
+  market:
+    benchmark: "000300"  # 基准指数
+    industry_return_periods: [1, 5, 20]
+
+  # Alpha因子
+  alpha:
+    enabled: true
+    factors: "all"  # 或指定因子列表
+
+  # 舆情特征
+  sentiment:
+    enabled: true  # 是否启用舆情特征(需要额外数据获取)
+    news_weight: 0.6
+    announcement_weight: 0.4
+    lookback_days: 30
+    # 情感分析
+    positive_words: ["上涨", "涨停", "突破", "利好", "增长", "盈利"]
+    negative_words: ["下跌", "跌停", "利空", "亏损", "风险", "违规"]
+
+# 标签配置
+labels:
+  # 日度标签
+  daily:
+    type: "return_rank"  # return_binary, return_rank, return_regression
+    threshold: 0.0       # 二分类阈值
+
+  # 周度标签
+  weekly:
+    type: "return_rank"
+    forward_days: 5      # 未来5个交易日
+
+# 模型配置
+models:
+  # LightGBM
+  lightgbm:
+    enabled: true
+    params:
+      objective: "lambdarank"
+      metric: "ndcg"
+      boosting_type: "gbdt"
+      num_leaves: 63
+      learning_rate: 0.05
+      feature_fraction: 0.8
+      bagging_fraction: 0.8
+      bagging_freq: 5
+      min_data_in_leaf: 100
+      lambda_l1: 0.1
+      lambda_l2: 0.1
+      max_depth: 8
+      n_estimators: 500
+      early_stopping_rounds: 50
+      verbose: -1
+
+  # XGBoost
+  xgboost:
+    enabled: true
+    params:
+      objective: "rank:pairwise"
+      eval_metric: "ndcg"
+      booster: "gbtree"
+      max_depth: 6
+      learning_rate: 0.05
+      subsample: 0.8
+      colsample_bytree: 0.8
+      min_child_weight: 100
+      reg_alpha: 0.1
+      reg_lambda: 0.1
+      n_estimators: 500
+      early_stopping_rounds: 50
+      tree_method: "gpu_hist"  # 使用GPU加速
+      gpu_id: 0
+
+  # LSTM
+  lstm:
+    enabled: true
+    params:
+      input_size: null       # 自动根据特征数设置
+      hidden_size: 128
+      num_layers: 2
+      dropout: 0.2
+      bidirectional: false
+      sequence_length: 20   # 使用过去20天的数据
+
+    training:
+      batch_size: 512
+      learning_rate: 0.001
+      epochs: 100
+      early_stopping_patience: 10
+      scheduler:
+        type: "ReduceLROnPlateau"
+        factor: 0.5
+        patience: 5
+
+  # 模型集成
+  ensemble:
+    method: "weighted_average"  # weighted_average, stacking
+    weights:
+      lightgbm: 0.4
+      xgboost: 0.4
+      lstm: 0.2
+    stacking:
+      meta_learner: "ridge"  # ridge, linear
+
+# 训练配置
+training:
+  # 数据划分
+  train_start: "2022-01-01"
+  train_end: "2024-06-30"
+  valid_start: "2024-07-01"
+  valid_end: "2024-12-31"
+  test_start: "2025-01-01"
+  test_end: null
+
+  # 滚动训练
+  rolling:
+    enabled: true
+    retrain_frequency: "monthly"  # monthly, quarterly
+    min_train_days: 250           # 最少训练样本天数
+
+  # 交叉验证
+  cv:
+    enabled: false
+    n_splits: 5
+    method: "time_series"  # time_series, group_kfold
+
+  # 特征选择
+  feature_selection:
+    enabled: true
+    method: "importance"  # importance, correlation
+    top_k: 100
+
+# 回测配置
+backtest:
+  # 交易成本
+  costs:
+    commission: 0.001  # 手续费 0.1%
+    slippage: 0.001    # 滑点 0.1%
+    stamp_duty: 0.001  # 印花税 0.1% (卖出时)
+
+  # 持仓配置
+  portfolio:
+    top_n: 50          # 持有前N只股票
+    rebalance: "daily" # daily, weekly
+    max_weight: 0.1    # 单只股票最大权重
+
+  # 风险控制
+  risk:
+    max_drawdown: 0.2  # 最大回撤阈值
+    stop_loss: 0.1     # 个股止损线
+
+# 信号生成配置
+signal:
+  # 综合预测
+  combine_method: "weighted"  # weighted, rank_fusion
+  daily_weight: 0.6
+  weekly_weight: 0.4
+
+  # 信号阈值
+  threshold:
+    strong_buy: 0.8    # 强烈买入
+    buy: 0.6           # 买入
+    hold: 0.4          # 持有
+    sell: 0.2          # 卖出
+
+# 日志配置
+logging:
+  level: "INFO"
+  format: "{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}"
+  rotation: "10 MB"
+  retention: "30 days"
+
+# GPU配置
+gpu:
+  enabled: true
+  device: "cuda:0"
+  mixed_precision: true
