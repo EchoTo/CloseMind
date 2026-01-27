@@ -19,6 +19,7 @@ xgboost>=2.0.0
 # 深度学习
 torch>=2.0.0
 torchvision>=0.15.0
+einops>=0.7.0            # Transformer tensor操作
 
 # 技术分析
 ta-lib>=0.4.0

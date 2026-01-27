@@ -67,7 +67,10 @@ def cmd_train(args, config):
     from data import DataProcessor
     from data.qlib_converter import SimpleDataLoader
     from features import FeatureEngine
-    from models import EnsembleModel, LightGBMModel, XGBoostModel, LSTMModel
+    from models import (
+        EnsembleModel, LightGBMModel, XGBoostModel, LSTMModel,
+        PatchTSTModel, iTransformerModel, MambaModel, MoEModel
+    )
     from backtest import BacktestEvaluator
     from report import ReportGenerator
 

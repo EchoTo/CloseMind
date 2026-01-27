@@ -166,6 +166,7 @@ pip install streamlit
 pip install pyyaml loguru tqdm
 pip install jupyter ipykernel
 pip install pyarrow joblib
+pip install einops              :: Transformer tensor操作
 ```
 
 ### 5.3 创建数据目录
@@ -192,20 +193,32 @@ mkdir reports
 gpu:
   enabled: true
   device: "cuda:0"
-  mixed_precision: true  # 5070Ti支持，可加速训练
+  mixed_precision: true  # 5070Ti支持FP16/BF16，可加速训练
 
 # XGBoost GPU配置
 models:
   xgboost:
     params:
-      tree_method: "gpu_hist"  # 使用GPU加速
+      tree_method: "gpu_hist"
       gpu_id: 0
 
-# LSTM训练配置（可以增大batch_size利用显存）
+# 深度学习模型（12GB显存可适当增大batch_size）
 models:
   lstm:
     training:
-      batch_size: 1024  # 12GB显存可以用更大的batch
+      batch_size: 512
+  patchtst:
+    training:
+      batch_size: 512
+  itransformer:
+    training:
+      batch_size: 512
+  mamba:
+    training:
+      batch_size: 512
+  moe:
+    training:
+      batch_size: 512    # MoE显存占用较大，酌情调小
 ```
 
 ### 6.2 检查显存使用
@@ -230,21 +243,32 @@ python main.py download --all
 ### 7.2 训练模型
 
 ```cmd
-:: 训练所有模型
-python main.py train --all
+:: 训练集成模型（全部7个子模型）
+python main.py train
 
-:: 或分别训练
-python main.py train --model lightgbm
-python main.py train --model xgboost
-python main.py train --model lstm
+:: 使用脚本单独训练
+python scripts/train.py --model lgb
+python scripts/train.py --model xgb
+python scripts/train.py --model lstm
+python scripts/train.py --model patchtst
+python scripts/train.py --model itransformer
+python scripts/train.py --model mamba
+python scripts/train.py --model moe
+python scripts/train.py --model ensemble
+python scripts/train.py --model all
 ```
 
-**训练时间参考**（RTX 5070Ti）：
-| 模型 | 预计时间 |
-|------|---------|
-| LightGBM | 5-10分钟 |
-| XGBoost (GPU) | 3-5分钟 |
-| LSTM (GPU) | 15-30分钟 |
+**模型说明**（RTX 5070Ti 12GB显存）：
+
+| 模型 | 类型 | 集成权重 |
+|------|------|---------|
+| LightGBM | 树模型 (CPU) | 10% |
+| XGBoost | 树模型 (GPU) | 10% |
+| Bi-LSTM+Attention | RNN+注意力 (GPU) | 5% |
+| PatchTST | Transformer (GPU) | 25% |
+| iTransformer | 反转Transformer (GPU) | 20% |
+| Mamba | 状态空间 (GPU) | 15% |
+| MoE | 混合专家 (GPU) | 15% |
 
 ### 7.3 生成预测
 
@@ -270,12 +294,20 @@ streamlit run app.py
 
 ### Q1: CUDA out of memory
 
-减小batch_size：
+减小batch_size，或禁用部分模型：
 ```yaml
 models:
-  lstm:
+  patchtst:
     training:
-      batch_size: 512  # 或更小
+      batch_size: 128
+  itransformer:
+    training:
+      batch_size: 128
+  mamba:
+    training:
+      batch_size: 128
+  moe:
+    enabled: false  # MoE显存占用最大，可先禁用
 ```
 
 ### Q2: TA-Lib安装失败
@@ -309,9 +341,15 @@ python -c "import torch; print(torch.version.cuda)"
 增大batch_size和num_workers：
 ```yaml
 models:
-  lstm:
+  patchtst:
     training:
-      batch_size: 2048
+      batch_size: 1024
+  itransformer:
+    training:
+      batch_size: 1024
+  mamba:
+    training:
+      batch_size: 1024
 
 data:
   download:
@@ -332,12 +370,12 @@ data:
 ### 针对RTX 5070Ti的优化
 
 1. **启用混合精度训练**（已在配置中启用）
+   - 所有深度模型(LSTM/PatchTST/iTransformer/Mamba/MoE)均支持FP16混合精度
    - 显著加速训练，减少显存占用
 
 2. **增大batch_size**
-   - 12GB显存可以支持较大的batch
-   - LSTM: 1024-2048
-   - 其他模型按需调整
+   - 12GB显存参考: batch_size=512 可同时训练大部分模型
+   - MoE由于多专家并行，显存占用最大，可适当调小
 
 3. **使用SSD存储数据**
    - 数据读取速度提升明显

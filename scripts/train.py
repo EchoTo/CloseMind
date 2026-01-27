@@ -21,7 +21,11 @@ from loguru import logger
 from data import DataProcessor
 from data.qlib_converter import SimpleDataLoader
 from features import FeatureEngine
-from models import LightGBMModel, XGBoostModel, LSTMModel, EnsembleModel
+from models import (
+    LightGBMModel, XGBoostModel, LSTMModel,
+    PatchTSTModel, iTransformerModel, MambaModel, MoEModel,
+    EnsembleModel
+)
 from backtest import BacktestEvaluator
 from report import ReportGenerator
 
@@ -99,7 +103,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        choices=["lgb", "xgb", "lstm", "ensemble", "all"],
+        choices=["lgb", "xgb", "lstm", "patchtst", "itransformer", "mamba", "moe", "ensemble", "all"],
         default="ensemble",
         help="训练的模型类型"
     )
@@ -186,6 +190,42 @@ def main():
             )
             lstm_model.save("lstm_model")
             results["lstm"] = lstm_result
+
+        if args.model in ["patchtst", "all"]:
+            logger.info("Training PatchTST...")
+            patchtst_model = PatchTSTModel(config)
+            patchtst_result = patchtst_model.train(
+                train_df, valid_df, feature_cols, args.label
+            )
+            patchtst_model.save("patchtst_model")
+            results["patchtst"] = patchtst_result
+
+        if args.model in ["itransformer", "all"]:
+            logger.info("Training iTransformer...")
+            itransformer_model = iTransformerModel(config)
+            itransformer_result = itransformer_model.train(
+                train_df, valid_df, feature_cols, args.label
+            )
+            itransformer_model.save("itransformer_model")
+            results["itransformer"] = itransformer_result
+
+        if args.model in ["mamba", "all"]:
+            logger.info("Training Mamba...")
+            mamba_model = MambaModel(config)
+            mamba_result = mamba_model.train(
+                train_df, valid_df, feature_cols, args.label
+            )
+            mamba_model.save("mamba_model")
+            results["mamba"] = mamba_result
+
+        if args.model in ["moe", "all"]:
+            logger.info("Training MoE...")
+            moe_model = MoEModel(config)
+            moe_result = moe_model.train(
+                train_df, valid_df, feature_cols, args.label
+            )
+            moe_model.save("moe_model")
+            results["moe"] = moe_result
 
         if args.model == "ensemble":
             logger.info("Training Ensemble...")

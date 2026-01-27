@@ -164,19 +164,20 @@ models:
       tree_method: "gpu_hist"  # 使用GPU加速
       gpu_id: 0
 
-  # LSTM
+  # Bi-LSTM + Multi-Head Attention
   lstm:
     enabled: true
     params:
       input_size: null       # 自动根据特征数设置
-      hidden_size: 128
-      num_layers: 2
+      hidden_size: 256
+      num_layers: 3
       dropout: 0.2
-      bidirectional: false
+      bidirectional: true
+      n_attention_heads: 4
       sequence_length: 20   # 使用过去20天的数据
 
     training:
-      batch_size: 512
+      batch_size: 256
       learning_rate: 0.001
       epochs: 100
       early_stopping_patience: 10
@@ -185,13 +186,95 @@ models:
         factor: 0.5
         patience: 5
 
+  # PatchTST - 基于Patch的Transformer时序模型 (ICLR 2023)
+  patchtst:
+    enabled: true
+    params:
+      d_model: 256
+      n_heads: 8
+      n_layers: 4
+      d_ff: 512
+      patch_len: 4
+      stride: 2
+      dropout: 0.2
+      sequence_length: 20
+
+    training:
+      batch_size: 256
+      learning_rate: 0.0001
+      epochs: 100
+      early_stopping_patience: 10
+      weight_decay: 0.0001
+
+  # iTransformer - 反转Transformer多因子交叉建模 (ICLR 2024)
+  itransformer:
+    enabled: true
+    params:
+      d_model: 256
+      n_heads: 8
+      n_layers: 4
+      d_ff: 512
+      dropout: 0.2
+      sequence_length: 20
+
+    training:
+      batch_size: 256
+      learning_rate: 0.0001
+      epochs: 100
+      early_stopping_patience: 10
+      weight_decay: 0.0001
+
+  # Mamba - 选择性状态空间模型 (ICLR 2025)
+  mamba:
+    enabled: true
+    params:
+      d_model: 256
+      d_state: 16
+      d_conv: 4
+      expand: 2
+      n_layers: 4
+      dropout: 0.2
+      sequence_length: 20
+
+    training:
+      batch_size: 256
+      learning_rate: 0.0001
+      epochs: 100
+      early_stopping_patience: 10
+      weight_decay: 0.0001
+
+  # MoE - 混合专家门控网络 (Time-MoE, ICLR 2025 Spotlight)
+  moe:
+    enabled: true
+    params:
+      d_model: 256
+      num_experts: 4
+      top_k: 2
+      n_moe_layers: 3
+      n_heads: 8
+      d_ff: 512
+      dropout: 0.2
+      sequence_length: 20
+      lb_loss_weight: 0.01  # 负载均衡损失权重
+
+    training:
+      batch_size: 256
+      learning_rate: 0.0001
+      epochs: 100
+      early_stopping_patience: 10
+      weight_decay: 0.0001
+
   # 模型集成
   ensemble:
     method: "weighted_average"  # weighted_average, stacking
     weights:
-      lightgbm: 0.4
-      xgboost: 0.4
-      lstm: 0.2
+      lightgbm: 0.10
+      xgboost: 0.10
+      lstm: 0.05
+      patchtst: 0.25
+      itransformer: 0.20
+      mamba: 0.15
+      moe: 0.15
     stacking:
       meta_learner: "ridge"  # ridge, linear
 

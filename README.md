@@ -6,7 +6,7 @@
 
 - **多周期预测**: 日度 + 周度预测
 - **全市场覆盖**: 支持全A股约5000只股票
-- **多模型集成**: LightGBM + XGBoost + LSTM
+- **7模型集成**: LightGBM + XGBoost + Bi-LSTM+Attention + PatchTST + iTransformer + Mamba + MoE
 - **150+特征**: 技术指标、量价特征、市场特征、Alpha因子、舆情特征
 - **持仓跟踪**: 跟踪买卖信号历史，展示持仓收益和预期
 - **可视化界面**: 基于Streamlit的本地Web界面
@@ -29,10 +29,14 @@ CloseMind/
 │   ├── alpha.py           # Alpha因子
 │   └── sentiment.py       # 舆情特征
 ├── models/                 # 模型层
-│   ├── lgb_model.py       # LightGBM模型
-│   ├── xgb_model.py       # XGBoost模型
-│   ├── lstm_model.py      # LSTM时序模型
-│   └── ensemble.py        # 模型集成
+│   ├── lgb_model.py       # LightGBM排序模型
+│   ├── xgb_model.py       # XGBoost排序模型
+│   ├── lstm_model.py      # Bi-LSTM + Multi-Head Attention
+│   ├── patchtst_model.py  # PatchTST (ICLR 2023)
+│   ├── itransformer_model.py # iTransformer (ICLR 2024)
+│   ├── mamba_model.py     # Mamba状态空间模型 (ICLR 2025)
+│   ├── moe_model.py       # 混合专家MoE (ICLR 2025 Spotlight)
+│   └── ensemble.py        # 7模型动态集成
 ├── strategy/               # 策略层
 │   ├── signal.py          # 信号生成
 │   ├── portfolio.py       # 组合优化
@@ -155,16 +159,22 @@ python main.py download --indices
 #### 训练模型
 
 ```bash
-# 训练所有模型
-python main.py train --all
+# 训练集成模型（默认训练全部7个子模型）
+python main.py train
 
-# 训练单个模型
-python main.py train --model lightgbm
-python main.py train --model xgboost
-python main.py train --model lstm
+# 使用脚本单独训练
+python scripts/train.py --model lgb
+python scripts/train.py --model xgb
+python scripts/train.py --model lstm
+python scripts/train.py --model patchtst
+python scripts/train.py --model itransformer
+python scripts/train.py --model mamba
+python scripts/train.py --model moe
+python scripts/train.py --model ensemble
+python scripts/train.py --model all
 
-# 指定日期范围
-python main.py train --all --start-date 2022-01-01 --end-date 2024-12-31
+# 训练后评估
+python scripts/train.py --model ensemble --evaluate
 ```
 
 #### 生成预测
@@ -210,14 +220,31 @@ data:
 
 ### 模型配置
 
+系统包含7个模型，按类型分为两类：
+
+**树模型（表格数据）：**
+- LightGBM — LambdaRank排序模型
+- XGBoost — Pairwise排序模型（GPU加速）
+
+**深度学习模型（时序数据）：**
+- Bi-LSTM + Attention — 双向LSTM + 多头时间注意力
+- PatchTST — 基于Patch的Transformer (ICLR 2023)
+- iTransformer — 反转Transformer，变量作token (ICLR 2024)
+- Mamba — 选择性状态空间模型，双向扫描 (ICLR 2025)
+- MoE — 混合专家Top-K门控网络 (ICLR 2025 Spotlight)
+
 ```yaml
 models:
   ensemble:
-    method: "weighted_average"
+    method: "weighted_average"  # 或 "stacking"
     weights:
-      lightgbm: 0.4
-      xgboost: 0.4
-      lstm: 0.2
+      lightgbm: 0.10
+      xgboost: 0.10
+      lstm: 0.05
+      patchtst: 0.25       # 主力模型
+      itransformer: 0.20
+      mamba: 0.15
+      moe: 0.15
 ```
 
 ### 信号阈值
@@ -294,7 +321,7 @@ data:
     batch_size: 50       # 减少批量大小
 ```
 
-### Q: 内存不足？
+### Q: 内存不足/显存不足？
 
 减少训练数据量或批次大小：
 ```yaml
@@ -302,10 +329,22 @@ training:
   train_start: "2023-01-01"  # 缩短训练时间范围
 
 models:
-  lstm:
+  # 所有深度学习模型都支持调整batch_size
+  patchtst:
     training:
-      batch_size: 256  # 减小批次大小
+      batch_size: 128  # 减小批次大小
+  itransformer:
+    training:
+      batch_size: 128
+  mamba:
+    training:
+      batch_size: 128
+  moe:
+    training:
+      batch_size: 128
 ```
+
+也可以在 `config.yaml` 中将部分模型设为 `enabled: false` 来减少资源占用。
 
 ### Q: Apple Silicon如何加速？
 
