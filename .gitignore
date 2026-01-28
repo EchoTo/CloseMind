@@ -1,0 +1,46 @@
+# 数据目录
+data_storage/
+*.parquet
+*.csv
+
+# 模型检查点
+checkpoints/
+*.pkl
+*.pt
+*.pth
+
+# 日志和报告
+logs/
+reports/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# 虚拟环境
+venv/
+env/
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# 临时文件
+*.tmp
+*.temp
+*.bak

@@ -78,6 +78,19 @@ def load_data(_config):
 
 
 @st.cache_data(ttl=3600)
+def load_stock_names(_config):
+    """加载股票名称映射表"""
+    paths = _config.get("paths", {})
+    raw_data_dir = Path(paths.get("raw_data_dir", "./data_storage/raw"))
+    stock_list_path = raw_data_dir / "stock_list.csv"
+
+    if stock_list_path.exists():
+        df = pd.read_csv(stock_list_path, dtype={"code": str})
+        return dict(zip(df["code"], df["name"]))
+    return {}
+
+
+@st.cache_data(ttl=3600)
 def compute_features(_config, df):
     """计算特征"""
     from features import FeatureEngine
@@ -153,8 +166,8 @@ def generate_predictions(config, df, feature_cols):
     return tracked, None
 
 
-def plot_stock_chart(df, code, days=60):
-    """绘制个股K线图"""
+def plot_stock_chart(df, code, days=60, predictions=None):
+    """绘制个股K线图（含预测）"""
     stock_data = df[df["code"] == code].tail(days).copy()
 
     if len(stock_data) == 0:
@@ -168,7 +181,7 @@ def plot_stock_chart(df, code, days=60):
         subplot_titles=("价格走势", "成交量")
     )
 
-    # K线图
+    # K线图（中国市场：红涨绿跌）
     fig.add_trace(
         go.Candlestick(
             x=stock_data["date"],
@@ -176,10 +189,55 @@ def plot_stock_chart(df, code, days=60):
             high=stock_data["high"],
             low=stock_data["low"],
             close=stock_data["close"],
-            name="K线"
+            name="历史K线",
+            increasing_line_color="#ef232a",  # 上涨-红色
+            increasing_fillcolor="#ef232a",
+            decreasing_line_color="#14b143",  # 下跌-绿色
+            decreasing_fillcolor="#14b143"
         ),
         row=1, col=1
     )
+
+    # 添加预测K线（如果有）
+    if predictions is not None and len(predictions) > 0:
+        fig.add_trace(
+            go.Candlestick(
+                x=predictions["date"],
+                open=predictions["open"],
+                high=predictions["high"],
+                low=predictions["low"],
+                close=predictions["close"],
+                name="预测K线",
+                increasing_line_color="#ff9999",  # 预测上涨-浅红色
+                increasing_fillcolor="#ffcccc",
+                decreasing_line_color="#99ff99",  # 预测下跌-浅绿色
+                decreasing_fillcolor="#ccffcc",
+                opacity=0.7
+            ),
+            row=1, col=1
+        )
+
+        # 添加预测区域标记线
+        last_date = stock_data["date"].iloc[-1]
+        last_date_str = pd.to_datetime(last_date).strftime("%Y-%m-%d")
+        fig.add_shape(
+            type="line",
+            x0=last_date_str, x1=last_date_str,
+            y0=0, y1=1,
+            yref="paper",
+            line=dict(color="gray", width=2, dash="dash"),
+            row=1, col=1
+        )
+        # 添加标注
+        fig.add_annotation(
+            x=last_date_str,
+            y=1.02,
+            yref="paper",
+            text="← 历史 | 预测 →",
+            showarrow=False,
+            font=dict(size=10, color="gray"),
+            row=1, col=1
+        )
 
     # 均线
     if "ma_5" in stock_data.columns:
@@ -206,6 +264,24 @@ def plot_stock_chart(df, code, days=60):
         xaxis_rangeslider_visible=False,
         template="plotly_white"
     )
+
+    # 根据实际数据跳过非交易日，让K线连续显示
+    trading_dates = pd.to_datetime(stock_data["date"]).sort_values()
+
+    # 如果有预测数据，合并日期
+    if predictions is not None and len(predictions) > 0:
+        pred_dates = pd.to_datetime(predictions["date"])
+        trading_dates = pd.concat([trading_dates, pred_dates]).sort_values()
+
+    # 计算需要跳过的非交易日
+    all_dates = pd.date_range(start=trading_dates.min(), end=trading_dates.max(), freq='D')
+    non_trading_dates = all_dates.difference(trading_dates)
+
+    if len(non_trading_dates) > 0:
+        dt_breaks = [d.strftime("%Y-%m-%d") for d in non_trading_dates]
+        fig.update_xaxes(
+            rangebreaks=[dict(values=dt_breaks)]
+        )
 
     return fig
 
@@ -259,7 +335,7 @@ def main():
     # 功能选择
     page = st.sidebar.selectbox(
         "选择功能",
-        ["📊 今日预测", "📈 个股分析", "🔍 回测评估", "⚡ 系统状态"]
+        ["📊 今日预测", "🔮 全部预测结果", "📈 个股分析", "🔍 回测评估", "⚡ 系统状态"]
     )
 
     # 检查数据状态
@@ -380,6 +456,134 @@ def main():
             mime="text/csv"
         )
 
+    # ========== 全部预测结果 ==========
+    elif page == "🔮 全部预测结果":
+        st.header("🔮 全部股票预测结果")
+
+        if not data_exists:
+            st.warning("⚠️ 数据未下载，请先运行: `python main.py download`")
+            return
+
+        if not model_exists:
+            st.warning("⚠️ 模型未训练，请先运行: `python main.py train`")
+            return
+
+        with st.spinner("正在加载数据和生成预测..."):
+            df = load_data(config)
+            if df is None:
+                return
+            df_features = compute_features(config, df)
+            feature_cols = get_feature_columns(df_features)
+            signals, error = generate_predictions(config, df_features, feature_cols)
+
+        if error:
+            st.error(error)
+            return
+
+        if signals is None or len(signals) == 0:
+            st.warning("没有生成预测结果")
+            return
+
+        # 加载股票名称
+        stock_names = load_stock_names(config)
+        signals["股票名称"] = signals["code"].map(lambda x: stock_names.get(x, "未知"))
+
+        # 筛选控件
+        st.sidebar.subheader("筛选条件")
+
+        # 信号类型筛选
+        signal_types = st.sidebar.multiselect(
+            "信号类型",
+            ["strong_buy", "buy", "hold", "sell", "strong_sell"],
+            default=["strong_buy", "buy"]
+        )
+
+        # 分数范围
+        score_range = st.sidebar.slider(
+            "预测分数范围",
+            0.0, 1.0, (0.5, 1.0)
+        )
+
+        # 排序方式
+        sort_by = st.sidebar.selectbox(
+            "排序方式",
+            ["combined_score", "confidence", "code"],
+            format_func=lambda x: {"combined_score": "预测分数", "confidence": "置信度", "code": "股票代码"}[x]
+        )
+
+        sort_ascending = st.sidebar.checkbox("升序排列", value=False)
+
+        # 显示数量
+        show_n = st.sidebar.slider("显示数量", 10, 500, 100)
+
+        # 应用筛选
+        filtered = signals.copy()
+        if signal_types:
+            filtered = filtered[filtered["signal"].isin(signal_types)]
+        filtered = filtered[
+            (filtered["combined_score"] >= score_range[0]) &
+            (filtered["combined_score"] <= score_range[1])
+        ]
+        filtered = filtered.sort_values(sort_by, ascending=sort_ascending).head(show_n)
+
+        # 显示统计
+        st.info(f"📊 筛选后共 **{len(filtered)}** 只股票 (总计 {len(signals)} 只)")
+
+        # 信号分布
+        col1, col2, col3, col4, col5 = st.columns(5)
+        signal_counts = filtered["signal"].value_counts()
+        with col1:
+            st.metric("强烈买入", signal_counts.get("strong_buy", 0))
+        with col2:
+            st.metric("买入", signal_counts.get("buy", 0))
+        with col3:
+            st.metric("持有", signal_counts.get("hold", 0))
+        with col4:
+            st.metric("卖出", signal_counts.get("sell", 0))
+        with col5:
+            st.metric("强烈卖出", signal_counts.get("strong_sell", 0))
+
+        # 显示表格
+        st.subheader("📋 预测结果列表")
+
+        display_cols = ["code", "股票名称", "signal", "combined_score", "confidence"]
+        display_cols = [c for c in display_cols if c in filtered.columns]
+
+        display_df = filtered[display_cols].copy()
+        display_df.columns = ["代码", "名称", "信号", "预测分数", "置信度"][:len(display_cols)]
+
+        # 格式化
+        if "预测分数" in display_df.columns:
+            display_df["预测分数"] = display_df["预测分数"].apply(lambda x: f"{x:.4f}")
+        if "置信度" in display_df.columns:
+            display_df["置信度"] = display_df["置信度"].apply(lambda x: f"{x:.2%}" if pd.notna(x) else "N/A")
+
+        # 信号颜色映射
+        def color_signal(val):
+            colors = {
+                "strong_buy": "background-color: #28a745; color: white",
+                "buy": "background-color: #5cb85c; color: white",
+                "hold": "background-color: #ffc107; color: black",
+                "sell": "background-color: #f0ad4e; color: white",
+                "strong_sell": "background-color: #dc3545; color: white"
+            }
+            return colors.get(val, "")
+
+        st.dataframe(
+            display_df.style.applymap(color_signal, subset=["信号"] if "信号" in display_df.columns else []),
+            use_container_width=True,
+            height=500
+        )
+
+        # 下载按钮
+        csv = filtered.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            label="📥 下载筛选结果",
+            data=csv,
+            file_name=f"filtered_predictions.csv",
+            mime="text/csv"
+        )
+
     # ========== 个股分析 ==========
     elif page == "📈 个股分析":
         st.header("📈 个股详细分析")
@@ -394,18 +598,39 @@ def main():
                 return
             df_features = compute_features(config, df)
 
-        # 股票选择
+        # 股票选择（显示名称+代码）
+        stock_names = load_stock_names(config)
         stock_codes = sorted(df["code"].unique())
-        selected_code = st.sidebar.selectbox("选择股票代码", stock_codes)
+        stock_options = [f"{stock_names.get(code, '未知')} ({code})" for code in stock_codes]
+        code_map = {f"{stock_names.get(code, '未知')} ({code})": code for code in stock_codes}
 
-        # 时间范围
+        selected_option = st.sidebar.selectbox("选择股票", stock_options)
+        selected_code = code_map.get(selected_option, stock_codes[0] if stock_codes else None)
+
+        # 时间范围和预测设置
         days = st.sidebar.slider("显示天数", 20, 120, 60)
+        show_prediction = st.sidebar.checkbox("显示价格预测", value=True)
+        forecast_days = st.sidebar.slider("预测天数", 5, 20, 10) if show_prediction else 0
 
         # 股票信息
         stock_data = df_features[df_features["code"] == selected_code]
         if len(stock_data) > 0:
             latest = stock_data.iloc[-1]
 
+            # 获取模型预测信号（如果有）
+            stock_signal = None
+            if model_exists:
+                try:
+                    feature_cols = get_feature_columns(df_features)
+                    signals, _ = generate_predictions(config, df_features, feature_cols)
+                    if signals is not None:
+                        stock_signal = signals[signals["code"] == selected_code]
+                        if len(stock_signal) > 0:
+                            stock_signal = stock_signal.iloc[0]
+                except:
+                    pass
+
+            # 显示基本信息
             col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric("最新价", f"{latest['close']:.2f}")
@@ -418,10 +643,75 @@ def main():
                 if "turnover" in latest:
                     st.metric("换手率", f"{latest['turnover']:.2f}%")
 
-            # K线图
-            fig = plot_stock_chart(df_features, selected_code, days)
+            # 显示模型预测（如果有）
+            if stock_signal is not None:
+                st.subheader("🤖 模型预测信号")
+                col1, col2, col3, col4 = st.columns(4)
+
+                signal_colors = {
+                    "strong_buy": "🟢 强烈买入",
+                    "buy": "🟢 买入",
+                    "hold": "🟡 持有",
+                    "sell": "🔴 卖出",
+                    "strong_sell": "🔴 强烈卖出"
+                }
+
+                with col1:
+                    signal_text = signal_colors.get(stock_signal["signal"], stock_signal["signal"])
+                    st.metric("预测信号", signal_text)
+                with col2:
+                    st.metric("预测分数", f"{stock_signal['combined_score']:.4f}")
+                with col3:
+                    if "confidence" in stock_signal and pd.notna(stock_signal["confidence"]):
+                        st.metric("置信度", f"{stock_signal['confidence']:.2%}")
+                with col4:
+                    if "expected_gain" in stock_signal and pd.notna(stock_signal["expected_gain"]):
+                        st.metric("预期收益", f"{stock_signal['expected_gain']:.2%}")
+
+            # 价格预测
+            predictions = None
+            if show_prediction and forecast_days > 0:
+                with st.spinner("正在生成价格预测..."):
+                    try:
+                        from models.price_predictor import PricePredictor
+                        predictor = PricePredictor(config)
+                        predictions = predictor.predict_price(df_features, selected_code, forecast_days)
+
+                        if predictions is not None:
+                            # 显示预测摘要
+                            summary = predictor.get_prediction_summary(df_features, selected_code, forecast_days)
+                            if summary:
+                                st.subheader(f"📈 未来 {forecast_days} 天价格预测")
+                                col1, col2, col3, col4 = st.columns(4)
+                                with col1:
+                                    st.metric("当前价格", f"{summary['current_price']:.2f}")
+                                with col2:
+                                    delta_color = "normal" if summary['predicted_return'] >= 0 else "inverse"
+                                    st.metric(
+                                        "预测价格",
+                                        f"{summary['predicted_price']:.2f}",
+                                        delta=f"{summary['predicted_return']:.2f}%"
+                                    )
+                                with col3:
+                                    st.metric("预测下界 (10%)", f"{summary['lower_bound']:.2f}")
+                                with col4:
+                                    st.metric("预测上界 (90%)", f"{summary['upper_bound']:.2f}")
+                    except Exception as e:
+                        st.warning(f"价格预测失败: {e}")
+                        predictions = None
+
+            # K线图（含预测）
+            fig = plot_stock_chart(df_features, selected_code, days, predictions)
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
+
+            # 预测K线数据表格
+            if predictions is not None and len(predictions) > 0:
+                st.subheader("📋 预测K线数据")
+                pred_display = predictions[["date", "open", "high", "low", "close"]].copy()
+                pred_display.columns = ["日期", "开盘价", "最高价", "最低价", "收盘价"]
+                pred_display["日期"] = pred_display["日期"].dt.strftime("%Y-%m-%d")
+                st.dataframe(pred_display, use_container_width=True)
 
             # 技术指标
             st.subheader("📊 技术指标")
@@ -429,21 +719,21 @@ def main():
 
             with col1:
                 if "rsi_6" in latest:
-                    st.metric("RSI(6)", f"{latest['rsi_6']:.1f}")
+                    st.metric("RSI(6) 相对强弱指数", f"{latest['rsi_6']:.1f}")
                 if "rsi_12" in latest:
-                    st.metric("RSI(12)", f"{latest['rsi_12']:.1f}")
+                    st.metric("RSI(12) 相对强弱指数", f"{latest['rsi_12']:.1f}")
 
             with col2:
                 if "macd_dif" in latest:
-                    st.metric("MACD DIF", f"{latest['macd_dif']:.3f}")
+                    st.metric("MACD DIF 差离值", f"{latest['macd_dif']:.3f}")
                 if "macd_dea" in latest:
-                    st.metric("MACD DEA", f"{latest['macd_dea']:.3f}")
+                    st.metric("MACD DEA 信号线", f"{latest['macd_dea']:.3f}")
 
             with col3:
                 if "kdj_k" in latest:
-                    st.metric("KDJ K", f"{latest['kdj_k']:.1f}")
+                    st.metric("KDJ K 随机指标", f"{latest['kdj_k']:.1f}")
                 if "kdj_d" in latest:
-                    st.metric("KDJ D", f"{latest['kdj_d']:.1f}")
+                    st.metric("KDJ D 随机指标", f"{latest['kdj_d']:.1f}")
 
     # ========== 回测评估 ==========
     elif page == "🔍 回测评估":

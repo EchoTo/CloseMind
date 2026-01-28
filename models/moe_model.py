@@ -291,10 +291,15 @@ class MoEModel:
         self.early_stopping_patience = self.training_config.get("early_stopping_patience", 10)
         self.weight_decay = self.training_config.get("weight_decay", 1e-4)
 
-        # 设备
+        # 设备选择：CUDA > MPS > CPU
         gpu_config = config.get("gpu", {})
-        if gpu_config.get("enabled", True) and torch.cuda.is_available():
-            self.device = torch.device(gpu_config.get("device", "cuda:0"))
+        if gpu_config.get("enabled", True):
+            if torch.cuda.is_available():
+                self.device = torch.device(gpu_config.get("device", "cuda:0"))
+            elif torch.backends.mps.is_available():
+                self.device = torch.device("mps")  # Apple Silicon GPU
+            else:
+                self.device = torch.device("cpu")
         else:
             self.device = torch.device("cpu")
 

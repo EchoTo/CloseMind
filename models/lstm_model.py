@@ -206,14 +206,19 @@ class LSTMModel:
         self.epochs = self.training_config.get("epochs", 100)
         self.early_stopping_patience = self.training_config.get("early_stopping_patience", 10)
 
-        # 设备
+        # 设备选择：CUDA > MPS > CPU
         gpu_config = config.get("gpu", {})
-        if gpu_config.get("enabled", True) and torch.cuda.is_available():
-            self.device = torch.device(gpu_config.get("device", "cuda:0"))
+        if gpu_config.get("enabled", True):
+            if torch.cuda.is_available():
+                self.device = torch.device(gpu_config.get("device", "cuda:0"))
+            elif torch.backends.mps.is_available():
+                self.device = torch.device("mps")  # Apple Silicon GPU
+            else:
+                self.device = torch.device("cpu")
         else:
             self.device = torch.device("cpu")
 
-        # 混合精度训练（支持RTX 30/40/50系列）
+        # 混合精度训练（仅CUDA支持）
         self.use_mixed_precision = (
             gpu_config.get("mixed_precision", True) and
             torch.cuda.is_available()
